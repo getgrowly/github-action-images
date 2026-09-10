@@ -1,3 +1,14 @@
+# Build every image in this repo and publish it to GHCR.
+#
+# Adding an image is one matrix entry plus a directory -- do not copy the
+# job. The published name is `ghcr.io/<owner>/<repo>/<matrix.name>`, so the
+# name field is part of the public contract: renaming it orphans the old
+# package and every consumer pinned to it.
+#
+# All images rebuild on any change under a watched path. That is deliberate:
+# per-path filtering needs a third-party action and gets the dependency
+# graph wrong the first time a shared base changes. The registry cache is
+# scoped per image, so an untouched image is a cache hit and costs ~20s.
 name: Build and Push Docker Images
 
 on:
@@ -5,27 +16,53 @@ on:
     branches:
       - main
     paths:
-      - 'java/temurin/21/**'
-      - 'java/temurin/25/**'
+      - 'java/**'
+      - 'runner/**'
       - '.github/workflows/build-and-push.yml'
   pull_request:
     branches:
       - main
     paths:
-      - 'java/temurin/21/**'
-      - 'java/temurin/25/**'
+      - 'java/**'
+      - 'runner/**'
+      - '.github/workflows/build-and-push.yml'
   workflow_dispatch:
+
+concurrency:
+  group: build-and-push-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push-java-temurin-21:
+  build:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+
+    strategy:
+      # One broken image should not hide the state of the others.
+      fail-fast: false
+      matrix:
+        include:
+          - name: java-temurin-21
+            context: java/temurin/21
+
+          - name: java-temurin-25
+            context: java/temurin/25
+
+          # ARC runner for the inviditech cluster (runs-on: inviditech-prod).
+          # `version` is the upstream actions-runner release it is built on:
+          # it is passed in as a build arg AND published as an image tag, so
+          # the cluster can pin `runner-devops:<version>` and read what it is
+          # running without pulling the image.
+          - name: runner-devops
+            context: runner/devops
+            version: "2.337.0"
 
     steps:
       - name: Checkout repository
@@ -46,73 +83,42 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/java-temurin-21
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.name }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ matrix.version }},enable=${{ matrix.version != '' && github.ref == 'refs/heads/main' }}
 
       - name: Build and push Docker image
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: ./java/temurin/21
-          file: ./java/temurin/21/Dockerfile
+          context: ./${{ matrix.context }}
+          file: ./${{ matrix.context }}/Dockerfile
+          build-args: ${{ matrix.version && format('RUNNER_VERSION={0}', matrix.version) || '' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped per image: an unscoped gha cache is one key shared by the
+          # whole matrix, so the images evict each other and nothing is ever
+          # a hit.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           platforms: linux/amd64
 
-      - name: Image digest
-        run: echo "Image pushed with digest ${{ steps.build.outputs.digest }}"
-
-  build-and-push-java-temurin-25:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/java-temurin-25
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: ./java/temurin/25
-          file: ./java/temurin/25/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-      - name: Image digest
-        run: echo "Image pushed with digest ${{ steps.build.outputs.digest }}"
+      - name: Summary
+        run: |
+          {
+            echo "### \`${{ matrix.name }}\`"
+            echo ""
+            echo '```'
+            echo "${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo ""
+            echo "Tags:"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
