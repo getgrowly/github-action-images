@@ -68,7 +68,7 @@ jobs:
           # Shape: <upstream actions-runner release>-<revision of our layer>
           - name: runner-devops
             context: runner/devops
-            version: "2.337.0-1"
+            version: "2.337.0-2"
             build-args: RUNNER_VERSION=2.337.0
 
     steps:

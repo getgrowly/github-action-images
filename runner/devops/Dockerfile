@@ -48,14 +48,17 @@ RUN curl -fsSLo /usr/local/lib/docker/cli-plugins/docker-compose \
       "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
  && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
 
-# helm -- PINNED TO 3.x ON PURPOSE.
+# helm -- MATCH ARGO CD'S BUNDLED HELM, not "latest" and not "whatever we
+# had". CI renders charts (gitops ci/render.py) to predict what Argo CD
+# will apply; if the two binaries differ, CI can go green on a manifest the
+# cluster renders differently -- the exact failure the render step exists
+# to prevent.
 #
-# CI renders charts (gitops ci/render.py) to predict what Argo CD will
-# apply. Argo CD's repo-server still bundles helm 3, and helm 4 changes
-# template output in places. A helm 4 here would make CI green on a
-# manifest the cluster renders differently -- the exact failure the render
-# step exists to prevent. Bump this only when Argo CD itself moves.
-ARG HELM_VERSION=v3.22.0
+# The version to match is whatever the running repo-server has:
+#   kubectl -n argocd exec deploy/argocd-repo-server -- helm version
+# Argo CD v3.5.1 -> helm v4.2.1 (checked 2026-09-11). Bump this when Argo
+# CD is upgraded, in the same change.
+ARG HELM_VERSION=v4.2.1
 RUN curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
       | tar -xz -C /tmp linux-amd64/helm \
  && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm \
