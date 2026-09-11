@@ -4,7 +4,7 @@
 #   docker CLI + buildx, git, curl, jq, python3, unzip, tar, gpg, ssh, sudo
 # so none of those are installed again here. What it does NOT have, and
 # what pipelines in this org reach for:
-#   helm, kubectl, gh, PyYAML, git-lfs, make, rsync, zip, xz
+#   docker compose, helm, kubectl, gh, PyYAML, git-lfs, make, rsync, zip, xz
 #
 # Everything added here is something a pipeline actually runs. Resist
 # "might be useful" tooling: this image is pulled on every cold runner pod,
@@ -37,6 +37,16 @@ RUN apt-get update \
       xz-utils \
       zip \
  && rm -rf /var/lib/apt/lists/*
+
+# docker compose -- the base image ships buildx as its only CLI plugin, and
+# `docker compose` is not a fallback for `docker-compose`: it resolves
+# through the plugin directory or not at all. Pipelines here run their
+# checks inside compose services, so without this the very first step dies
+# with "docker: unknown command: docker compose".
+ARG COMPOSE_VERSION=v5.5.1
+RUN curl -fsSLo /usr/local/lib/docker/cli-plugins/docker-compose \
+      "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+ && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
 
 # helm -- PINNED TO 3.x ON PURPOSE.
 #
@@ -74,7 +84,8 @@ RUN git --version \
  && kubectl version --client=true \
  && gh --version | head -1 \
  && docker --version \
- && docker buildx version
+ && docker buildx version \
+ && docker compose version
 
 USER runner
 WORKDIR /home/runner

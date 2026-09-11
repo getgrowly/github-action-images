@@ -56,13 +56,20 @@ jobs:
             context: java/temurin/25
 
           # ARC runner for the inviditech cluster (runs-on: inviditech-prod).
-          # `version` is the upstream actions-runner release it is built on:
-          # it is passed in as a build arg AND published as an image tag, so
-          # the cluster can pin `runner-devops:<version>` and read what it is
-          # running without pulling the image.
+          #
+          # `version` is the published tag and the cluster pins it, so it
+          # must never point at two different images: bump the trailing
+          # revision on ANY change to runner/devops, even one that keeps the
+          # same upstream runner. Republishing a tag in place leaves nodes
+          # that already cached it running the old layer (imagePullPolicy
+          # defaults to IfNotPresent for a non-`latest` tag) -- a build that
+          # passes here and fails on one node out of three.
+          #
+          # Shape: <upstream actions-runner release>-<revision of our layer>
           - name: runner-devops
             context: runner/devops
-            version: "2.337.0"
+            version: "2.337.0-1"
+            build-args: RUNNER_VERSION=2.337.0
 
     steps:
       - name: Checkout repository
@@ -97,7 +104,7 @@ jobs:
         with:
           context: ./${{ matrix.context }}
           file: ./${{ matrix.context }}/Dockerfile
-          build-args: ${{ matrix.version && format('RUNNER_VERSION={0}', matrix.version) || '' }}
+          build-args: ${{ matrix.build-args }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
